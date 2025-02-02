@@ -2,7 +2,7 @@ from app.database.models import async_session
 from app.database.models import User, Category, Item, Business, Cart, Event
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy.exc import SQLAlchemyError
 
 
 def connection(func):
@@ -116,7 +116,10 @@ async def clear_cart(session, user_id):
     await session.execute(delete(Cart).where(Cart.user_id == user_id))
     await session.commit()
 
-
+@connection
+async def get_business_by_id(session, business_id):
+    """Возвращает бизнес по его ID."""
+    return await session.scalar(select(Business).where(Business.id == business_id))
 
 
 @connection
@@ -218,3 +221,30 @@ async def increase_prices_by_15_percent(session):
     
     await session.commit()  # Сохраняем изменения в базе данных
     return len(items_list)  # Возвращаем количество обновленных продуктов
+
+
+
+
+@connection
+async def transfer_money(session, from_business_id, to_business_id, amount):
+    """Переводит деньги с одного счета на другой."""
+    try:
+        # Начинаем транзакцию
+        async with session.begin():
+            # Списываем деньги с компании-инициатора
+            from_business = await session.scalar(select(Business).where(Business.id == from_business_id))
+            if not from_business:
+                raise ValueError(f"Бизнес с ID {from_business_id} не найден.")
+            if from_business.budget < amount:
+                raise ValueError(f"Недостаточно средств. Бюджет: {from_business.budget}, требуется: {amount}")
+            from_business.budget -= amount
+
+            # Добавляем деньги компании-партнеру
+            to_business = await session.scalar(select(Business).where(Business.id == to_business_id))
+            if not to_business:
+                raise ValueError(f"Бизнес с ID {to_business_id} не найден.")
+            to_business.budget += amount
+
+    except SQLAlchemyError as e:
+        await session.rollback()  # Откатываем транзакцию в случае ошибки
+        raise ValueError(f"Ошибка при переводе денег: {e}")

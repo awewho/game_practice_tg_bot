@@ -27,6 +27,12 @@ class TaxPayment(StatesGroup):
 class InsurancePayment(StatesGroup):
     waiting_for_insurance_amount = State()
 
+class Contract(StatesGroup):
+    awaiting_partner_company = State()  # Ожидание выбора компании-партнера
+    awaiting_contract_description = State()  # Ожидание описания договора
+    awaiting_contract_amount = State()  # Ожидание суммы договора
+    awaiting_confirmation = State()  # Ожидание подтверждения сделки
+
 load_dotenv()
 async def send_message_to_channel(bot: Bot, text: str):
 
@@ -106,7 +112,7 @@ async def paginate(callback: CallbackQuery):
         # Получаем бизнесы для данной страницы
         businesses = await rq.get_all_businesses()
         await callback.message.edit_text(
-            "Выберите тип вашего бизнеса:",
+            "Выберите бизнес:",
             reply_markup=kb.business_keyboard(businesses, page=page)
         )
 
@@ -352,3 +358,179 @@ async def process_insurance_amount(message: Message, state: FSMContext):
         await message.answer("Бизнес не найден.")
     
     await state.clear()
+
+
+@router.callback_query(F.data == "make_contract")
+async def start_contract(callback: CallbackQuery, state: FSMContext):
+    """Начинает процесс заключения договора."""
+    businesses = await rq.get_all_businesses()
+    if not businesses:
+        await callback.message.answer("Нет доступных компаний для заключения договора.")
+        return
+
+    await callback.message.answer(
+        "Выберите компанию, с которой хотите заключить договор:",
+        reply_markup=kb.business_keyboard(businesses)
+    )
+    await state.set_state(Contract.awaiting_partner_company)
+
+@router.callback_query(StateFilter(Contract.awaiting_partner_company), F.data.startswith("business_"))
+async def choose_partner_company(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор компании-партнера."""
+    business_id = int(callback.data.split("_")[1])
+    await state.update_data(partner_business_id=business_id)
+    await callback.message.answer("Введите описание договора:")
+    await state.set_state(Contract.awaiting_contract_description)
+
+@router.message(StateFilter(Contract.awaiting_contract_description))
+async def set_contract_description(message: Message, state: FSMContext):
+    """Обрабатывает ввод описания договора."""
+    description = message.text
+    await state.update_data(contract_description=description)
+    await message.answer("Введите сумму договора:")
+    await state.set_state(Contract.awaiting_contract_amount)
+
+@router.message(StateFilter(Contract.awaiting_contract_amount))
+async def set_contract_amount(message: Message, state: FSMContext):
+    """Обрабатывает ввод суммы договора."""
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите корректную сумму (целое число больше 0).")
+        return
+
+    data = await state.get_data()
+    partner_business_id = data.get("partner_business_id")
+    description = data.get("contract_description")
+
+    # Получаем информацию о компании-партнере
+    partner_business = await rq.get_business_by_id(partner_business_id)
+    if not partner_business:
+        await message.answer("Компания-партнер не найдена.")
+        await state.clear()
+        return
+
+    # Сохраняем сумму договора
+    await state.update_data(contract_amount=amount)
+
+    # Формируем сообщение для подтверждения
+    await message.answer(
+        f"Вы хотите заключить договор с компанией {partner_business.name}:\n"
+        f"Описание: {description}\n"
+        f"Сумма: {amount} рублей.\n\n"
+        "Подтвердите сделку:",
+        reply_markup=kb.confirm_contract_keyboard()
+    )
+    await state.set_state(Contract.awaiting_confirmation)
+
+@router.callback_query(StateFilter(Contract.awaiting_confirmation), F.data == "confirm_contract")
+async def confirm_contract(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Обрабатывает подтверждение договора."""
+    data = await state.get_data()
+    partner_business_id = data.get("partner_business_id")
+    description = data.get("contract_description")
+    amount = data.get("contract_amount")
+
+    # Получаем информацию о компании-партнере
+    partner_business = await rq.get_business_by_id(partner_business_id)
+    if not partner_business:
+        await callback.message.answer("Компания-партнер не найдена.")
+        await state.clear()
+        return
+
+    # Получаем информацию о текущем пользователе
+    user = await rq.get_user_with_business(callback.from_user.id)
+    if not user or not user.business:
+        await callback.message.answer("Ваш бизнес не зарегистрирован.")
+        await state.clear()
+        return
+
+    # Проверяем, хватает ли средств у инициатора сделки
+    if user.business.budget < amount:
+        await callback.message.answer("Недостаточно средств на счете для заключения договора.")
+        await state.clear()
+        return
+
+    # Отправляем запрос на подтверждение сделки компании-партнеру
+    await bot.send_message(
+        chat_id=partner_business.users[0].tg_id,  # Предполагаем, что у бизнеса есть хотя бы один владелец
+        text=f"Компания {user.business.name} хочет заключить с вами договор:\n"
+             f"Описание: {description}\n"
+             f"Сумма: {amount} рублей.\n\n"
+             "Подтвердите сделку:",
+        reply_markup=kb.confirm_partner_contract_keyboard(user.business.id, amount)
+    )
+
+    await callback.message.answer("Запрос на заключение договора отправлен. Ожидайте подтверждения.")
+    await state.clear()
+
+@router.callback_query(F.data.startswith("confirm_partner_contract_"))
+async def confirm_partner_contract(callback: CallbackQuery, bot: Bot):
+    """Обрабатывает подтверждение договора со стороны компании-партнера."""
+    data = callback.data.split("_")
+    initiator_business_id = int(data[3])
+    amount = int(data[4])
+
+     # Получаем информацию о компании-инициаторе
+    initiator_business = await rq.get_business_by_id(initiator_business_id)
+    if not initiator_business:
+        await callback.message.answer("Компания-инициатор не найдена.")
+        return
+    
+       # Получаем информацию о текущем пользователе (компании-партнере)
+    partner_user = await rq.get_user_with_business(callback.from_user.id)
+    if not partner_user or not partner_user.business:
+        await callback.message.answer("Ваш бизнес не зарегистрирован.")
+        return
+    try:
+        # Переводим деньги
+        await rq.transfer_money(initiator_business_id, partner_user.business.id, amount)
+
+        # Уведомляем обе стороны
+        await bot.send_message(
+            chat_id=initiator_business.users[0].tg_id,
+            text=f"Компания {partner_user.business.name} подтвердила договор. Сумма {amount} рублей переведена."
+        )
+        await callback.message.answer(f"Вы подтвердили договор с компанией {initiator_business.name}. Сумма {amount} рублей зачислена на ваш счет.")
+
+    except ValueError as e:
+        await callback.message.answer(f"Ошибка: {e}")
+
+
+@router.callback_query(F.data.startswith("reject_partner_contract_"))
+async def reject_partner_contract(callback: CallbackQuery, bot: Bot):
+    """Обрабатывает отказ от договора со стороны компании-партнера."""
+    data = callback.data.split("_")
+    initiator_business_id = int(data[3])
+
+    # Получаем информацию о компании-инициаторе
+    initiator_business = await rq.get_business_by_id(initiator_business_id)
+    if not initiator_business:
+        await callback.message.answer("Компания-инициатор не найдена.")
+        return
+
+    # Уведомляем обе стороны об отмене сделки
+    await bot.send_message(
+        chat_id=initiator_business.users[0].tg_id,
+        text=f"Директор {callback.from_user.full_name} отклонил(а) ваш договор."
+    )
+
+    await callback.message.answer("Вы отклонили договор.")
+
+
+@router.callback_query(F.data == "cancel_contract")
+async def cancel_contract(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Обрабатывает отмену заключения договора."""
+    # Получаем данные из состояния
+    data = await state.get_data()
+    partner_business_id = data.get("partner_business_id")
+    contract_description = data.get("contract_description")
+    contract_amount = data.get("contract_amount")
+
+    # Очищаем состояние
+    await state.clear()
+
+    # Уведомляем текущего пользователя об отмене
+    await callback.message.answer("Вы отменили заключение договора.")

@@ -16,7 +16,7 @@ def business_keyboard(businesses, page: int = 0, items_per_page: int = 1):
     for business in page_businesses:
         keyboard.add(
             InlineKeyboardButton(
-                text=f"{business.type}",
+                text=f"{business.type} | {business.name}" ,
                 callback_data=f"business_{business.id}"
             )
         )
@@ -43,7 +43,17 @@ def make_order_button():
         [InlineKeyboardButton(text="Страховка", callback_data="insurance")]
     ])
 
+def confirm_contract_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Подтвердить", callback_data="confirm_contract")],
+        [InlineKeyboardButton(text="Отменить", callback_data="cancel_contract")]
+    ])
 
+def confirm_partner_contract_keyboard(initiator_business_id, amount):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Подтвердить", callback_data=f"confirm_partner_contract_{initiator_business_id}_{amount}")],
+        [InlineKeyboardButton(text="Отклонить", callback_data=f"reject_partner_contract_{initiator_business_id}")]
+    ])
 
 
 
@@ -122,3 +132,5 @@ def admin_keyboard():
         [InlineKeyboardButton(text='Сделать отчет', callback_data="create_report")],
         [InlineKeyboardButton(text='Инфляция +15%', callback_data="inflation")]
     ])
+
+
