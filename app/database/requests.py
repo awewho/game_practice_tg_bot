@@ -45,6 +45,7 @@ async def assign_business_to_user(session, tg_id, business_id):
     user.business_id = business.id
     await session.commit()
 
+
 @connection
 async def rename_business(session, business_id, new_name):
     """Изменяет название бизнеса."""
@@ -97,19 +98,18 @@ async def get_cart(session, user_id):
 @connection
 async def deduct_money_from_business(session, business_id, amount):
     """Списывает деньги с бюджета бизнеса."""
-    
     business = await session.scalar(select(Business).where(Business.id == business_id))
     if not business:
         raise ValueError(f"Бизнес с ID {business_id} не найден.")
 
-        # Проверяем, хватает ли бюджета
+    # Проверяем, хватает ли бюджета
     if business.budget < amount:
         raise ValueError(f"Недостаточно средств. Бюджет: {business.budget}, требуется: {amount}")
 
-        # Списываем деньги
+    # Списываем деньги
     business.budget -= amount
     await session.commit()
-        
+
 
 @connection
 async def clear_cart(session, user_id):
@@ -149,14 +149,20 @@ async def log_event(session, user_id, event_type, description, business_id=None)
 
 
 
+
 @connection
-async def add_money_to_user(session, user_id, amount):
-    """Добавляет деньги пользователю."""
-    user = await session.scalar(select(User).where(User.id == user_id))
-    if not user or not user.business:
-        raise ValueError("Пользователь или бизнес не найден.")
-    user.business.budget += amount
+async def add_money_to_company(session, business_id, amount):
+    """Добавляет деньги на счет указанной компании и возвращает объект бизнеса."""
+    business = await session.scalar(select(Business).where(Business.id == business_id))
+
+    if not business:
+        return None, f"❌ Бизнес с ID {business_id} не найден."
+
+    business.budget += amount
+    return business, f"✅ Компании '{business.name}' (ID: {business.id}) добавлено {amount} рублей. Новый баланс: {business.budget} рублей."
     await session.commit()
+    
+
 
 @connection
 async def deduct_all_expenses(session):
@@ -169,9 +175,46 @@ async def deduct_all_expenses(session):
 
     for user in users:
         business = user.business
-        if business and business.budget >= business.expenses:
-            business.budget -= business.expenses
-            total_deducted += business.expenses
+        if business:
+            if business.budget >= business.expenses:
+                business.budget -= business.expenses
+                total_deducted += business.expenses
+                await log_event(
+                    user_id=user.id,
+                    event_type="deduct_expenses",
+                    description=f"Списаны ежемесячные затраты у бизнеса {business.name} на сумму {business.expenses} рублей.",
+                    business_id=business.id
+                )
+            else:
+                await log_event(
+                    user_id=user.id,
+                    event_type="deduct_expenses_failed",
+                    description=f"У бизнеса {business.name} недостаточно средств для списания ежемесячных затрат. Требуется: {business.expenses}, доступно: {business.budget}.",
+                    business_id=business.id
+                )
 
     await session.commit()
     return total_deducted
+
+
+@connection
+async def update_monthly_expenses(session, business_id, new_expenses):
+    """Обновляет ежемесячные затраты для бизнеса."""
+    business = await session.scalar(select(Business).where(Business.id == business_id))
+    if not business:
+        raise ValueError(f"Бизнес с ID {business_id} не найден.")
+
+    business.expenses = new_expenses
+    await session.commit()
+
+
+@connection
+async def increase_prices_by_15_percent(session):
+    """Увеличивает стоимость всех продуктов на 15%."""
+    items = await session.scalars(select(Item))
+    items_list = items.all()  # Получаем список всех товаров
+    for item in items_list:
+        item.price = int(item.price * 1.15)  # Увеличиваем цену на 15% и округляем до целого числа
+    
+    await session.commit()  # Сохраняем изменения в базе данных
+    return len(items_list)  # Возвращаем количество обновленных продуктов

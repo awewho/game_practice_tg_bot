@@ -16,7 +16,7 @@ def business_keyboard(businesses, page: int = 0, items_per_page: int = 1):
     for business in page_businesses:
         keyboard.add(
             InlineKeyboardButton(
-                text=f"{business.type} | {business.name}",
+                text=f"{business.type}",
                 callback_data=f"business_{business.id}"
             )
         )
@@ -37,7 +37,10 @@ def business_keyboard(businesses, page: int = 0, items_per_page: int = 1):
 
 def make_order_button():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Сделать заказ у поставщика", callback_data="make_order")]
+        [InlineKeyboardButton(text="Сделать заказ у поставщика", callback_data="make_order")],
+        [InlineKeyboardButton(text="Заключить договор", callback_data="make_contract")],
+        [InlineKeyboardButton(text="Заплатить налоги", callback_data="pay_taxes")],
+        [InlineKeyboardButton(text="Страховка", callback_data="insurance")]
     ])
 
 
@@ -94,12 +97,6 @@ async def items(category_id, page: int = 0, items_per_page: int = 2):
 
 
 
-
-
-
-
-
-
 def add_or_order_keyboard():
     """Клавиатура с кнопками 'Оформить заказ' и 'Добавить ещё товары'."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -120,5 +117,8 @@ def admin_keyboard():
     """Клавиатура для администратора."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Списать затраты", callback_data="deduct_expenses")],
-        [InlineKeyboardButton(text="Добавить деньги", callback_data="add_money")]
+        [InlineKeyboardButton(text="Добавить деньги", callback_data="add_money")],
+        [InlineKeyboardButton(text='Обновить ежемесячные затраты', callback_data="update_expenses")],
+        [InlineKeyboardButton(text='Сделать отчет', callback_data="create_report")],
+        [InlineKeyboardButton(text='Инфляция +15%', callback_data="inflation")]
     ])

@@ -4,7 +4,8 @@ from aiogram.filters import CommandStart,Command, StateFilter
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram import Bot
-
+from dotenv import load_dotenv
+import os
 
 import app.keyboards as kb
 
@@ -19,11 +20,18 @@ class Registration(StatesGroup):
 class Quantity(StatesGroup):
     awaiting_quantity = State()
 
+class TaxPayment(StatesGroup):
+    waiting_for_income_tax = State()
+    waiting_for_payroll_tax = State()
 
+class InsurancePayment(StatesGroup):
+    waiting_for_insurance_amount = State()
+
+load_dotenv()
 async def send_message_to_channel(bot: Bot, text: str):
 
     """Отправляет сообщение в канал."""
-    await bot.send_message(chat_id= os.getenv('CHANNEL_ID'), text=text)
+    await bot.send_message(chat_id=os.getenv('CHANNEL_ID'), text=text)
 
 
 
@@ -224,7 +232,7 @@ async def show_cart(callback: CallbackQuery):
     response = "Ваш заказ:\n"
     total_price = 0
     for item, quantity in cart_items:
-        response += f"{item.name} x{quantity}шт. = {item.price * quantity} рублей\n"
+        response += f"{item.name} по цене {item.price} x{quantity}шт. = {item.price * quantity} рублей\n"
         total_price += item.price * quantity
 
     response += f"\nИтоговая сумма: {total_price} рублей."
@@ -288,3 +296,59 @@ async def cancel_order(callback: CallbackQuery):
     # Уведомляем пользователя
     await callback.message.answer("Ваш заказ отменён. Все товары удалены из корзины.")
 
+
+
+
+@router.callback_query(F.data == "pay_taxes")
+async def start_tax_payment(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите налог с дохода:")
+    await state.set_state(TaxPayment.waiting_for_income_tax)
+
+@router.message(TaxPayment.waiting_for_income_tax)
+async def process_income_tax(message: Message, state: FSMContext):
+    income_tax = float(message.text)
+    await state.update_data(income_tax=income_tax)
+    await message.answer("Введите налог ФОТ:")
+    await state.set_state(TaxPayment.waiting_for_payroll_tax)
+
+@router.message(TaxPayment.waiting_for_payroll_tax)
+async def process_payroll_tax(message: Message, state: FSMContext):
+    payroll_tax = float(message.text)
+    data = await state.get_data()
+    income_tax = data['income_tax']
+    
+    user = await rq.get_user_with_business(message.from_user.id)
+    if user and user.business:
+        total_tax = income_tax + payroll_tax
+        if user.business.budget >= total_tax:
+            await rq.deduct_money_from_business(user.business.id, total_tax)
+            await message.answer(f"Вы успешно заплатили налог.")
+        else:
+            await message.answer("Недостаточно средств на счете.")
+    else:
+        await message.answer("Бизнес не найден.")
+    
+    await state.clear()
+
+
+
+@router.callback_query(F.data == "insurance")
+async def start_insurance_payment(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите сумму, которую нужно перевести на счет страховой компании:")
+    await state.set_state(InsurancePayment.waiting_for_insurance_amount)
+
+@router.message(InsurancePayment.waiting_for_insurance_amount)
+async def process_insurance_amount(message: Message, state: FSMContext):
+    insurance_amount = int(message.text)
+    
+    user = await rq.get_user_with_business(message.from_user.id)
+    if user and user.business:
+        if user.business.budget >= insurance_amount:
+            await rq.deduct_money_from_business(user.business.id, insurance_amount)
+            await message.answer(f"Сумма {insurance_amount} успешно переведена.")
+        else:
+            await message.answer("Недостаточно средств на счете.")
+    else:
+        await message.answer("Бизнес не найден.")
+    
+    await state.clear()
