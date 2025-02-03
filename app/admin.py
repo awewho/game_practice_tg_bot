@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 
 from collections import defaultdict
 
-from app.database.requests import deduct_all_expenses, add_money_to_company, get_users, update_monthly_expenses, get_user_with_business, increase_prices_by_15_percent
+from app.database.requests import deduct_all_expenses, add_money_to_company, get_users, update_monthly_expenses, get_user_with_business, increase_prices_by_15_percent, get_business_by_id
 from app.keyboards import admin_keyboard
 
 from dotenv import load_dotenv
@@ -84,7 +84,7 @@ async def process_business_id(message: Message, state: FSMContext):
             raise ValueError
 
         await state.update_data(business_id=business_id)
-        await message.answer(f"ID компании установлен: {business_id}\nТеперь введите сумму для пополнения:")
+        await message.answer(f"ID компании установлен: {business_id} название компании \nТеперь введите сумму для пополнения:")
         await state.set_state(AddMoney.awaiting_amount)
 
     except ValueError:
@@ -97,6 +97,7 @@ async def process_add_money(message: Message, state: FSMContext):
     """Обрабатывает ввод суммы для пополнения и уведомляет владельца компании."""
     data = await state.get_data()
     business_id = data.get("business_id")
+    business = await get_business_by_id(business_id)
 
     try:
         amount = int(message.text)
@@ -104,31 +105,27 @@ async def process_add_money(message: Message, state: FSMContext):
             raise ValueError
 
         # Добавляем деньги на счет компании
-        business, result = await add_money_to_company(business_id, amount)
-        await message.answer(result)
+        await add_money_to_company(business_id, amount)
+        
 
-        if business:
-            # Получаем владельца компании
-            owner = await get_user_with_business(business.users[0].tg_id)  # Предполагаем, что у бизнеса есть хотя бы один владелец
-            if owner:
-                try:
-                    # Отправляем уведомление владельцу компании
-                    await message.bot.send_message(
-                        chat_id=owner.tg_id,
-                        text=f"На счет вашей компании '{business.name}' поступило {amount} рублей. Новый баланс: {business.budget} рублей."
-                    )
-                except Exception as e:
-                    print(f"Не удалось отправить сообщение пользователю {owner.tg_id}: {e}")
-            else:
-                await message.answer(f"❌ Не удалось найти владельца компании с ID {business_id}.")
+        if business and business.users:  # Проверяем, есть ли пользователи у бизнеса
+            owner = business.users[0]  # Берем первого владельца
+
+            try:
+                # Отправляем уведомление владельцу компании
+                await message.bot.send_message(
+                    chat_id=owner.tg_id,
+                    text=f"💰 На счет вашей компании '{business.name}' поступило {amount} рублей."
+                )
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить сообщение пользователю {owner.tg_id}: {e}")
         else:
-            await message.answer(f"❌ Не удалось найти бизнес с ID {business_id}.")
+            await message.answer(f"⚠️ Внимание: У компании с ID {business_id} нет зарегистрированных владельцев.")
 
         await state.clear()
 
     except ValueError:
         await message.answer("Введите корректную сумму (целое число больше 0).")
-
 
 
 

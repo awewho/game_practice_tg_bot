@@ -28,6 +28,18 @@ async def get_all_businesses(session):
 
 
 @connection
+async def get_courier_business_owner(session):
+    """Возвращает владельца курьерской компании."""
+    courier_business = await session.scalar(
+        select(Business)
+        .where(Business.type == "курьер")
+        .options(selectinload(Business.users))  # Загружаем связанных пользователей
+    )
+    if courier_business and courier_business.users:
+        return courier_business.users[0]  # Возвращаем первого пользователя (владельца)
+    return None
+
+@connection
 async def assign_business_to_user(session, tg_id, business_id):
     """Привязывает существующий бизнес к пользователю."""
     user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -151,20 +163,22 @@ async def log_event(session, user_id, event_type, description, business_id=None)
     await session.commit()
 
 
-
-
 @connection
-async def add_money_to_company(session, business_id, amount):
-    """Добавляет деньги на счет указанной компании и возвращает объект бизнеса."""
-    business = await session.scalar(select(Business).where(Business.id == business_id))
-
-    if not business:
-        return None, f"❌ Бизнес с ID {business_id} не найден."
-
-    business.budget += amount
-    return business, f"✅ Компании '{business.name}' (ID: {business.id}) добавлено {amount} рублей. Новый баланс: {business.budget} рублей."
-    await session.commit()
+async def add_money_to_company(session,  business_id, amount):
+    """
+    Универсальная функция для добавления денег на счет компании.
+    """
+    if amount <= 0:
+        return
     
+    # Ищем бизнес по ID
+    business = await session.scalar(select(Business).where(Business.id == business_id))
+    if not business:
+        return
+    
+    # Обновляем баланс компании
+    business.budget += amount
+    await session.commit()
 
 
 @connection

@@ -34,8 +34,8 @@ class Contract(StatesGroup):
     awaiting_confirmation = State()  # Ожидание подтверждения сделки
 
 load_dotenv()
-async def send_message_to_channel(bot: Bot, text: str):
 
+async def send_message_to_channel(bot: Bot, text: str):
     """Отправляет сообщение в канал."""
     await bot.send_message(chat_id=os.getenv('CHANNEL_ID'), text=text)
 
@@ -93,7 +93,7 @@ async def rename_business(message: Message, state: FSMContext):
     # Отправляем сообщение в канал
     await send_message_to_channel(
         bot=message.bot,
-        text=f"Появилась новая компания: {business_name}"
+        text=f"Появилась новая компания: {business_name} \n #новая_компания"
     )
 
     await message.answer(f"Название вашего бизнеса успешно изменено на: {business_name}!")
@@ -171,7 +171,7 @@ async def item(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.message.answer(
-        f"Вы выбрали товар: {item_data.name}\nОписание: {item_data.description}\nЦена: {item_data.price} рублей.\n\n"
+        f"Вы выбрали товар: {item_data.name}\nЦена: {item_data.price} рублей.\n\n"
         "Введите количество товара:",
     )
 
@@ -238,7 +238,7 @@ async def show_cart(callback: CallbackQuery):
     response = "Ваш заказ:\n"
     total_price = 0
     for item, quantity in cart_items:
-        response += f"{item.name} по цене {item.price} x{quantity}шт. = {item.price * quantity} рублей\n"
+        response += f"{item.name} по цене {item.price} x {quantity}шт. = {item.price * quantity} рублей\n"
         total_price += item.price * quantity
 
     response += f"\nИтоговая сумма: {total_price} рублей."
@@ -253,14 +253,26 @@ async def confirm_order(callback: CallbackQuery):
     if not user or not user.business:
         await callback.answer("Ваш бизнес не зарегистрирован.")
         return
+    # Находим владельца курьерской компании
+    courier_owner = await rq.get_courier_business_owner()
+    if not courier_owner:
+        await callback.message.answer("Курьерская компания не найдена.")
+        return
 
     cart_items = await rq.get_cart(callback.from_user.id)
     if not cart_items:
         await callback.message.answer("Ваша корзина пуста.")
         return
 
-    # Подсчитываем итоговую стоимость заказа
-    total_price = sum(item.price * quantity for item, quantity in cart_items)
+    # Подсчитываем итоговую стоимость заказа и общий вес
+    total_price = 0
+    total_weight = 0
+    for item, quantity in cart_items:
+        total_price += item.price * quantity
+        total_weight += item.weight * quantity
+
+    # Рассчитываем стоимость доставки
+    delivery_cost = 500 + 200 * (total_weight - 1) if total_weight > 0 else 0  # 1 кг = 500 рублей, каждый следующий +200
 
     # Проверяем, хватает ли бюджета для оформления заказа
     if user.business.budget < total_price:
@@ -274,23 +286,36 @@ async def confirm_order(callback: CallbackQuery):
     await rq.log_event(
         user_id=callback.from_user.id,
         event_type="make_order",
-        description=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей",
+        description=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей и доставку на сумму {delivery_cost} рублей",
         business_id=user.business_id
-    )
-
-    # Отправляем сообщение в канал
-    await send_message_to_channel(
-        bot=callback.bot,
-        text=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей"
-    )
+    ) 
     
+    await rq.add_money_to_company(courier_owner.business_id, delivery_cost)
+    
+
+    # Отправляем сообщение владельцу курьерской компании
+    try:
+        await callback.bot.send_message(
+            chat_id=courier_owner.tg_id,  # Отправляем сообщение напрямую пользователю
+            text=f"У вас новая доставка для компании {user.business.name} на сумму {delivery_cost} рублей, весом {total_weight} кг."
+        )
+    except Exception as e:
+        pass
+
     # Очищаем корзину
     await rq.clear_cart(callback.from_user.id)
 
     # Подтверждаем заказ пользователю
-    await callback.message.answer("Заказ оформлен! Спасибо за покупку.")
+    await callback.message.answer(f"Заказ оформлен! Спасибо за покупку.")
+    
+    ##Отправляем сообщение в канал
+    await send_message_to_channel(
+        bot=callback.bot,
+        text=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей \n #закупки"
+    )
 
 
+    
 
 
 @router.callback_query(F.data == "cancel_order")
@@ -328,7 +353,19 @@ async def process_payroll_tax(message: Message, state: FSMContext):
         total_tax = income_tax + payroll_tax
         if user.business.budget >= total_tax:
             await rq.deduct_money_from_business(user.business.id, total_tax)
-            await message.answer(f"Вы успешно заплатили налог.")
+            await message.answer(f"Вы успешно заплатили налог на сумму  {total_tax} рублей.")
+            ##Отправляем сообщение в канал
+            await send_message_to_channel(
+                bot=message.bot,
+                text=f"Компания {user.business.name} заплатила налоги на сумму  {total_tax} рублей \n #налоги"
+                )
+                # Логируем событие
+            await rq.log_event(
+                user_id=message.from_user.id,
+                event_type="tax",
+                description=f"Компания {user.business.name} заплатила налоги на сумму  {total_tax} рублей",
+                business_id=user.business.id
+                )
         else:
             await message.answer("Недостаточно средств на счете.")
     else:
@@ -352,6 +389,18 @@ async def process_insurance_amount(message: Message, state: FSMContext):
         if user.business.budget >= insurance_amount:
             await rq.deduct_money_from_business(user.business.id, insurance_amount)
             await message.answer(f"Сумма {insurance_amount} успешно переведена.")
+            ##Отправляем сообщение в канал
+            await send_message_to_channel(
+                bot=message.bot,
+                text=f"Компания {user.business.name} заплатила страховой компании за страховку {insurance_amount} рублей \n #страховка"
+                )
+                        # Логируем событие
+            await rq.log_event(
+                user_id=message.from_user.id,
+                event_type="insurance",
+                description=f"Компания {user.business.name}  заплатила страховой компании за страховку {insurance_amount} рублей",
+                business_id=user.business.id
+                )
         else:
             await message.answer("Недостаточно средств на счете.")
     else:
@@ -494,6 +543,18 @@ async def confirm_partner_contract(callback: CallbackQuery, bot: Bot):
             text=f"Компания {partner_user.business.name} подтвердила договор. Сумма {amount} рублей переведена."
         )
         await callback.message.answer(f"Вы подтвердили договор с компанией {initiator_business.name}. Сумма {amount} рублей зачислена на ваш счет.")
+        ##Отправляем сообщение в канал
+        await send_message_to_channel(
+            bot=callback.bot,
+            text=f"Компания {initiator_business.name} заключила договор с компанией {partner_user.business.name} на сумму {amount} рублей \n #договор"
+            )
+        # Логируем событие
+        await rq.log_event(
+            user_id=message.from_user.id,
+            event_type="contract",
+            description=f"Компания {initiator_business.name} заключила договор с компанией {partner_user.business.name} на сумму {amount} рублей ",
+            business_id=business_id
+            )    
 
     except ValueError as e:
         await callback.message.answer(f"Ошибка: {e}")

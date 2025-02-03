@@ -57,15 +57,14 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(25))
 
 
-
 class Item(Base):
     __tablename__ = 'items'
 
-    id: Mapped[int]= mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(25))
-    description: Mapped[str] = mapped_column(String(120))
+
     price: Mapped[int] = mapped_column()
-    #для нашего бота перевести все числа в целые
+    weight: Mapped[int] = mapped_column(default=0)  # Вес в кг
     category: Mapped[int] = mapped_column(ForeignKey('categories.id'))
 
 
