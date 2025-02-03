@@ -3,8 +3,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs,async_sessionmaker,create_async_engine
 from datetime import datetime
 
+from dotenv import load_dotenv
+import os
 
-engine = create_async_engine(url='sqlite+aiosqlite:///bd.sqlite3')
+load_dotenv()
+
+engine = create_async_engine(url=os.getenv('SQLALCHEMY_URL'))
 
 async_session = async_sessionmaker(engine)
 
