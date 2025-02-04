@@ -45,7 +45,7 @@ class Cart(Base):
     __tablename__ = 'cart'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.id'))
     item_id: Mapped[int] = mapped_column(ForeignKey('items.id'))
     quantity: Mapped[int] = mapped_column(default=1)
 
@@ -77,7 +77,7 @@ class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # Добавляем аннотацию типа int
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id"), nullable=True)
     event_type: Mapped[str] = mapped_column(String)  # Тип события (например, "rename_business" или "make_order")
     description: Mapped[str] = mapped_column(String)  # Подробности события

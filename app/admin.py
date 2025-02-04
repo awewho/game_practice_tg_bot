@@ -160,7 +160,7 @@ async def process_new_expenses(message: Message, state: FSMContext):
         data = await state.get_data()
         business_id = data.get("business_id")
 
-        await rq.update_monthly_expenses(business_id, new_expenses)
+        await update_monthly_expenses(business_id, new_expenses)
         await message.answer(f"Ежемесячные затраты для бизнеса с ID {business_id} обновлены на {new_expenses} рублей.")
         await state.clear()
     except ValueError:

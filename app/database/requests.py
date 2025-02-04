@@ -82,7 +82,15 @@ async def get_users(session):
     """Получает всех пользователей."""
     return await session.scalars(select(User))
 
+@connection
+async def get_user_by_id(session, id):
+    """Получает пользователя."""
+    return await session.scalar(select(User).where(User.id == id))
 
+@connection
+async def get_user_by_tg_id(session, tg_id):
+    """Получает пользователя."""
+    return await session.scalar(select(User).where(User.tg_id == tg_id))
 
 @connection 
 async def add_to_cart(session, user_id, item_id, quantity):

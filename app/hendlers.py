@@ -82,9 +82,11 @@ async def rename_business(message: Message, state: FSMContext):
     # Изменяем название бизнеса
     await rq.rename_business(business_id, business_name)
 
+    user = await rq.get_user_by_tg_id(message.from_user.id)
+
     # Логируем событие
     await rq.log_event(
-        user_id=message.from_user.id,
+        user_id=user.id,
         event_type="rename_business",
         description=f"Появилась новая компания: {business_name}",
         business_id=business_id
@@ -201,7 +203,7 @@ async def set_quantity(message: Message, state: FSMContext):
     # Добавляем товар в корзину
     user = await rq.get_user_by_tg_id(message.from_user.id)
 
-    await rq.add_to_cart(user.tg_id, item_id, quantity)
+    await rq.add_to_cart(user.id, item_id, quantity)
 
     await message.answer(
         "Товар добавлен в корзину!",
@@ -231,7 +233,8 @@ async def to_main(callback: CallbackQuery):
 @router.callback_query(F.data == "show_cart")
 async def show_cart(callback: CallbackQuery):
     """Отображает содержимое корзины."""
-    cart_items = await rq.get_cart(callback.from_user.id)
+    user = await rq.get_user_by_tg_id(callback.from_user.id)
+    cart_items = await rq.get_cart(user.id)
     if not cart_items:
         await callback.message.answer("Ваша корзина пуста.")
         return
@@ -247,21 +250,22 @@ async def show_cart(callback: CallbackQuery):
     await callback.message.answer(response, reply_markup=kb.confirm_order_keyboard())
 
 
-
-
 @router.callback_query(F.data == "confirm_order")
 async def confirm_order(callback: CallbackQuery):
     user = await rq.get_user_with_business(callback.from_user.id)
     if not user or not user.business:
         await callback.answer("Ваш бизнес не зарегистрирован.")
         return
+
     # Находим владельца курьерской компании
     courier_owner = await rq.get_courier_business_owner()
     if not courier_owner:
         await callback.message.answer("Курьерская компания не найдена.")
         return
 
-    cart_items = await rq.get_cart(callback.from_user.id)
+    user = await rq.get_user_by_tg_id(callback.from_user.id)
+    cart_items = await rq.get_cart(user.id)
+
     if not cart_items:
         await callback.message.answer("Ваша корзина пуста.")
         return
@@ -269,9 +273,12 @@ async def confirm_order(callback: CallbackQuery):
     # Подсчитываем итоговую стоимость заказа и общий вес
     total_price = 0
     total_weight = 0
+    cart_details = []  # Список для хранения информации о каждом товаре в корзине
+
     for item, quantity in cart_items:
         total_price += item.price * quantity
         total_weight += item.weight * quantity
+        cart_details.append(f"{item.name} - {quantity} шт. по {item.price} руб. (вес: {item.weight} кг)")
 
     # Рассчитываем стоимость доставки
     delivery_cost = 500 + 200 * (total_weight - 1) if total_weight > 0 else 0  # 1 кг = 500 рублей, каждый следующий +200
@@ -284,16 +291,22 @@ async def confirm_order(callback: CallbackQuery):
     # Списываем деньги с бюджета и логируем событие
     await rq.deduct_money_from_business(user.business_id, total_price)
 
+    # Формируем описание заказа для лога
+    cart_description = "\n".join(cart_details)
+    log_description = (
+        f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей и доставку на сумму {delivery_cost} рублей.\n"
+        f"Состав заказа:\n{cart_description}"
+    )
+
     # Логируем событие
     await rq.log_event(
-        user_id=callback.from_user.id,
+        user_id=user.id,
         event_type="make_order",
-        description=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей и доставку на сумму {delivery_cost} рублей",
+        description=log_description,
         business_id=user.business_id
-    ) 
-    
+    )
+
     await rq.add_money_to_company(courier_owner.business_id, delivery_cost)
-    
 
     # Отправляем сообщение владельцу курьерской компании
     try:
@@ -305,15 +318,15 @@ async def confirm_order(callback: CallbackQuery):
         pass
 
     # Очищаем корзину
-    await rq.clear_cart(callback.from_user.id)
+    await rq.clear_cart(user.id)
 
     # Подтверждаем заказ пользователю
     await callback.message.answer(f"Заказ оформлен! Спасибо за покупку.")
-    
-    ##Отправляем сообщение в канал
+
+    # Отправляем сообщение в канал
     await send_message_to_channel(
         bot=callback.bot,
-        text=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей \n #закупки"
+        text=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей \n#закупки"
     )
 
 
@@ -323,8 +336,10 @@ async def confirm_order(callback: CallbackQuery):
 @router.callback_query(F.data == "cancel_order")
 async def cancel_order(callback: CallbackQuery):
     """Обрабатывает отмену заказа и очищает корзину."""
+    user = await rq.get_user_with_business(callback.from_user.id)
+
     # Очищаем корзину пользователя
-    await rq.clear_cart(callback.from_user.id)
+    await rq.clear_cart(user.id)
 
     # Уведомляем пользователя
     await callback.message.answer("Ваш заказ отменён. Все товары удалены из корзины.")
@@ -355,17 +370,17 @@ async def process_payroll_tax(message: Message, state: FSMContext):
         total_tax = income_tax + payroll_tax
         if user.business.budget >= total_tax:
             await rq.deduct_money_from_business(user.business.id, total_tax)
-            await message.answer(f"Вы успешно заплатили налог на сумму  {total_tax} рублей.")
+            await message.answer(f"Вы успешно заплатили налог на сумму {total_tax} рублей.")
             ##Отправляем сообщение в канал
             await send_message_to_channel(
                 bot=message.bot,
-                text=f"Компания {user.business.name} заплатила налоги на сумму  {total_tax} рублей \n #налоги"
+                text=f"Компания {user.business.name} заплатила налоги на сумму {total_tax} рублей \n#налоги"
                 )
                 # Логируем событие
             await rq.log_event(
-                user_id=message.from_user.id,
+                user_id=user.id,
                 event_type="tax",
-                description=f"Компания {user.business.name} заплатила налоги на сумму  {total_tax} рублей",
+                description=f"Компания {user.business.name} заплатила налоги на сумму {total_tax} рублей",
                 business_id=user.business.id
                 )
         else:
@@ -394,11 +409,11 @@ async def process_insurance_amount(message: Message, state: FSMContext):
             ##Отправляем сообщение в канал
             await send_message_to_channel(
                 bot=message.bot,
-                text=f"Компания {user.business.name} заплатила страховой компании за страховку {insurance_amount} рублей \n #страховка"
+                text=f"Компания {user.business.name} заплатила страховой компании за страховку {insurance_amount} рублей \n#страховка"
                 )
                         # Логируем событие
             await rq.log_event(
-                user_id=message.from_user.id,
+                user_id=user.id,
                 event_type="insurance",
                 description=f"Компания {user.business.name}  заплатила страховой компании за страховку {insurance_amount} рублей",
                 business_id=user.business.id
@@ -552,10 +567,10 @@ async def confirm_partner_contract(callback: CallbackQuery, bot: Bot):
             )
         # Логируем событие
         await rq.log_event(
-            user_id=message.from_user.id,
+            user_id=initiator_business.users[0].id,
             event_type="contract",
             description=f"Компания {initiator_business.name} заключила договор с компанией {partner_user.business.name} на сумму {amount} рублей ",
-            business_id=business_id
+            business_id=initiator_business.id
             )    
 
     except ValueError as e:

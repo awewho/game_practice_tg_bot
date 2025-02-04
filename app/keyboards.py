@@ -79,6 +79,7 @@ async def categories():
 
 
 async def items(category_id, page: int = 0, items_per_page: int = 2):
+    category_id = int(category_id)
     all_items = await get_category_item(category_id)
     
 
