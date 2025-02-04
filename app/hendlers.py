@@ -199,7 +199,9 @@ async def set_quantity(message: Message, state: FSMContext):
     item_id = data.get("selected_item_id")
 
     # Добавляем товар в корзину
-    await rq.add_to_cart(message.from_user.id, item_id, quantity)
+    user = await rq.get_user_by_tg_id(message.from_user.id)
+
+    await rq.add_to_cart(user.tg_id, item_id, quantity)
 
     await message.answer(
         "Товар добавлен в корзину!",
