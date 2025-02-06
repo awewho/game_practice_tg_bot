@@ -4,4 +4,6 @@ __pycache__/
 *.pyd
 .env
 bd.sqlite3
+alembic.ini
 .venv
+alembic

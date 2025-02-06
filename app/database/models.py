@@ -37,8 +37,11 @@ class Business(Base):
     type: Mapped[str] = mapped_column(String(50))  # Тип бизнеса
     name: Mapped[str] = mapped_column(String(50))  # Название компании
     budget: Mapped[int] = mapped_column(Integer, default=0)  # Бюджет
-    expenses: Mapped[int] = mapped_column(Integer, default=0)  # Траты
+    income: Mapped[int] = mapped_column(Integer, default=0)  #Доходы
+    cost: Mapped[int] = mapped_column(Integer, default=0) #Расходы
+    expenses: Mapped[int] = mapped_column(Integer, default=0)  # Ежемесячные траты
     users = relationship('User', back_populates='business', lazy='selectin')
+
 
 
 class Cart(Base):
@@ -61,15 +64,25 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(25))
 
 
+
+class Podcategory(Base):
+    __tablename__ = 'podcategories'
+
+    id: Mapped[int]= mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(25))
+    category: Mapped[int] = mapped_column(ForeignKey('categories.id'))
+
+
+
 class Item(Base):
     __tablename__ = 'items'
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(25))
-
+    description: Mapped[str] = mapped_column(String(120))
     price: Mapped[int] = mapped_column()
-    weight: Mapped[int] = mapped_column(default=0)  # Вес в кг
-    category: Mapped[int] = mapped_column(ForeignKey('categories.id'))
+    weight: Mapped[float] = mapped_column(default=0.0)  # Вес в кг, теперь с плавающей точкой
+    podcategory: Mapped[int] = mapped_column(ForeignKey('podcategories.id'))
 
 
 

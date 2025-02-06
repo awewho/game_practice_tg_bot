@@ -3,7 +3,7 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
 
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.database.requests import get_categories, get_category_item
+from app.database.requests import get_categories, get_category_item, get_podcategories, get_items_by_podcategory
 
 
 def business_keyboard(businesses, page: int = 0, items_per_page: int = 1):
@@ -35,7 +35,7 @@ def business_keyboard(businesses, page: int = 0, items_per_page: int = 1):
     return keyboard.as_markup()
 
 
-def make_order_button():
+def user_command():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Сделать заказ у поставщика", callback_data="make_order")],
         [InlineKeyboardButton(text="Заключить договор", callback_data="make_contract")],
@@ -76,25 +76,51 @@ async def categories():
     keyboard.row(InlineKeyboardButton(text='На главную', callback_data='to_main'))
     return keyboard.adjust(2).as_markup()
 
-
-
-async def items(category_id, page: int = 0, items_per_page: int = 2):
-    category_id = int(category_id)
-    all_items = await get_category_item(category_id)
+async def podcategories(category_id):
+    podcategories = await get_podcategories(category_id)
+    podcategories_list = podcategories.all() 
+    if not podcategories_list:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Подкатегорий пока нет", callback_data="no_podcategories")]
+        ])
     
+    keyboard = InlineKeyboardBuilder()
 
+    # Добавляем подкатегории по 2 в строку
+    for podcategory in podcategories_list:
+        keyboard.add(InlineKeyboardButton(
+            text=podcategory.name,
+            callback_data=f"podcategory_{podcategory.id}"
+        ))
+
+    # Если количество подкатегорий нечетное, последняя кнопка будет занимать всю ширину
+    if len(podcategories_list) % 2 != 0:
+        keyboard.adjust(2, 2, 1)  # 2 столбца, 2 строки, последняя кнопка на всю ширину
+    else:
+        keyboard.adjust(2)  # 2 столбца
+
+    # Добавляем кнопку "Назад"
+    keyboard.row(InlineKeyboardButton(text='К категориям', callback_data='to_categories'))
+
+    return keyboard.as_markup()
+
+async def items(podcategory_id, page: int = 0, items_per_page: int = 6):
+    all_items = await get_items_by_podcategory(podcategory_id)
+    
     keyboard = InlineKeyboardBuilder()
 
     start = page * items_per_page
     end = start + items_per_page
     page_items = all_items[start:end]
 
+    # Добавляем товары по 2 в строку
     for item in page_items:
         keyboard.add(InlineKeyboardButton(
-            text=item.name,
+            text=item.name[:20],  # Обрезаем название, если оно слишком длинное
             callback_data=f"item_{item.id}"
         ))
 
+    # Навигационные кнопки
     navigation_buttons = []
     if page > 0:
         navigation_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page_items_{page - 1}"))
@@ -104,8 +130,13 @@ async def items(category_id, page: int = 0, items_per_page: int = 2):
     if navigation_buttons:
         keyboard.row(*navigation_buttons)
 
-    return keyboard.as_markup()
+    # Добавляем кнопку "Назад" в подкатегорию
+    keyboard.row(InlineKeyboardButton(text='К категориям', callback_data='to_categories'))
 
+    # Настраиваем 2 столбца
+    keyboard.adjust(2)
+
+    return keyboard.as_markup()
 
 
 def add_or_order_keyboard():
@@ -129,6 +160,7 @@ def admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Списать затраты", callback_data="deduct_expenses")],
         [InlineKeyboardButton(text="Добавить деньги", callback_data="add_money")],
+        [InlineKeyboardButton(text="Снять деньги", callback_data="remove_money")],    
         [InlineKeyboardButton(text='Обновить ежемесячные затраты', callback_data="update_expenses")],
         [InlineKeyboardButton(text='Сделать отчет', callback_data="create_report")],
         [InlineKeyboardButton(text='Инфляция +15%', callback_data="inflation")]

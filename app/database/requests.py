@@ -1,5 +1,5 @@
 from app.database.models import async_session
-from app.database.models import User, Category, Item, Business, Cart, Event
+from app.database.models import User, Category, Podcategory, Item, Business, Cart, Event
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import SQLAlchemyError
@@ -92,6 +92,37 @@ async def get_user_by_tg_id(session, tg_id):
     """Получает пользователя."""
     return await session.scalar(select(User).where(User.tg_id == tg_id))
 
+@connection
+async def get_business_by_id(session, business_id):
+    """Возвращает бизнес по его ID."""
+    return await session.scalar(select(Business).where(Business.id == business_id))
+
+
+@connection
+async def get_categories(session):
+    return await session.scalars(select(Category))
+
+
+@connection
+async def get_category_item(session, category_id):
+    result = await session.scalars(select(Item).where(Item.category == category_id))
+    return result.all()
+        
+
+@connection
+async def get_item(session,item_id):
+    return await session.scalar(select(Item).where(Item.id == item_id))
+
+@connection
+async def get_podcategories(session, category_id):
+    return await session.scalars(select(Podcategory).where(Podcategory.category == category_id))
+
+@connection
+async def get_items_by_podcategory(session, podcategory_id):
+    result = await session.scalars(select(Item).where(Item.podcategory == podcategory_id))
+    return result.all()
+
+
 @connection 
 async def add_to_cart(session, user_id, item_id, quantity):
     """Добавляет товар в корзину."""
@@ -115,47 +146,11 @@ async def get_cart(session, user_id):
     return [(item, cart_item.quantity) for cart_item, item in cart_items]
 
 
-@connection
-async def deduct_money_from_business(session, business_id, amount):
-    """Списывает деньги с бюджета бизнеса."""
-    business = await session.scalar(select(Business).where(Business.id == business_id))
-    if not business:
-        raise ValueError(f"Бизнес с ID {business_id} не найден.")
-
-    # Проверяем, хватает ли бюджета
-    if business.budget < amount:
-        raise ValueError(f"Недостаточно средств. Бюджет: {business.budget}, требуется: {amount}")
-
-    # Списываем деньги
-    business.budget -= amount
-    await session.commit()
-
 
 @connection
 async def clear_cart(session, user_id):
     await session.execute(delete(Cart).where(Cart.user_id == user_id))
     await session.commit()
-
-@connection
-async def get_business_by_id(session, business_id):
-    """Возвращает бизнес по его ID."""
-    return await session.scalar(select(Business).where(Business.id == business_id))
-
-
-@connection
-async def get_categories(session):
-    return await session.scalars(select(Category))
-
-
-@connection
-async def get_category_item(session, category_id):
-    result = await session.scalars(select(Item).where(Item.category == category_id))
-    return result.all()
-        
-
-@connection
-async def get_item(session,item_id):
-    return await session.scalar(select(Item).where(Item.id == item_id))
 
 
 @connection
@@ -170,6 +165,21 @@ async def log_event(session, user_id, event_type, description, business_id=None)
     session.add(event)
     await session.commit()
 
+@connection
+async def deduct_money_from_business(session, business_id, amount):
+    """Списывает деньги с бюджета бизнеса."""
+    business = await session.scalar(select(Business).where(Business.id == business_id))
+    if not business:
+        raise ValueError(f"Бизнес с ID {business_id} не найден.")
+
+    # Проверяем, хватает ли бюджета
+    if business.budget < amount:
+        raise ValueError(f"Недостаточно средств. Бюджет: {business.budget}, требуется: {amount}")
+
+    # Списываем деньги
+    business.budget -= amount
+    business.cost += amount
+    await session.commit()
 
 @connection
 async def add_money_to_company(session,  business_id, amount):
@@ -186,7 +196,9 @@ async def add_money_to_company(session,  business_id, amount):
     
     # Обновляем баланс компании
     business.budget += amount
+    business.income += amount
     await session.commit()
+
 
 
 @connection
@@ -204,6 +216,7 @@ async def deduct_all_expenses(session):
             if business.budget >= business.expenses:
                 business.budget -= business.expenses
                 total_deducted += business.expenses
+                business.cost += total_deducted
                 await log_event(
                     user_id=user.id,
                     event_type="deduct_expenses",
@@ -260,12 +273,14 @@ async def transfer_money(session, from_business_id, to_business_id, amount):
             if from_business.budget < amount:
                 raise ValueError(f"Недостаточно средств. Бюджет: {from_business.budget}, требуется: {amount}")
             from_business.budget -= amount
+            from_business.cost += amount
 
             # Добавляем деньги компании-партнеру
             to_business = await session.scalar(select(Business).where(Business.id == to_business_id))
             if not to_business:
                 raise ValueError(f"Бизнес с ID {to_business_id} не найден.")
             to_business.budget += amount
+            to_business.income += amount
 
     except SQLAlchemyError as e:
         await session.rollback()  # Откатываем транзакцию в случае ошибки

@@ -95,10 +95,10 @@ async def rename_business(message: Message, state: FSMContext):
     # Отправляем сообщение в канал
     await send_message_to_channel(
         bot=message.bot,
-        text=f"Появилась новая компания: {business_name} \n #новая_компания"
+        text=f"Появилась новая компания: {business_name} \n#новая_компания"
     )
 
-    await message.answer(f"Название вашего бизнеса успешно изменено на: {business_name}!")
+    await message.answer(f"Название вашего бизнеса успешно изменено на: {business_name}! \nЧтобы узнать о своей компании используйте компанду /my_business")
     await state.clear()
 
 
@@ -128,7 +128,7 @@ async def paginate(callback: CallbackQuery):
 
 
 
-@router.message(Command("my_business"))
+@router.message(Command("my_business") or F.data == "to_main")
 async def show_business_info(message: Message):
     """Показывает информацию о бизнесе пользователя."""
     user_data = await rq.get_user_with_business(message.from_user.id)
@@ -143,7 +143,7 @@ async def show_business_info(message: Message):
         f"Текущий бюджет: {business.budget} рублей\n"
         f"Текущие ежемесячные траты: {business.expenses} рублей"
     )
-    await message.answer(response, reply_markup=kb.make_order_button())
+    await message.answer(response, reply_markup=kb.user_command())
 
 
 
@@ -154,15 +154,30 @@ async def catalog_gen_post(callback: CallbackQuery):
 
 
 
-
 @router.callback_query(F.data.startswith('category_'))
 async def category(callback: CallbackQuery):
-    await callback.message.answer('Выберите товар', 
-                                reply_markup=await kb.items(callback.data.split('_')[1]))
-    
+    category_id = int(callback.data.split('_')[1])
+    podcategories = await rq.get_podcategories(category_id)
+    if not podcategories:
+        await callback.message.answer('Нет подкатегорий для этой категории')
+        return
+    await callback.message.answer('Выберите подкатегорию', reply_markup=await kb.podcategories(category_id))
 
+@router.callback_query(F.data.startswith('podcategory_'))
+async def podcategory(callback: CallbackQuery):
+    podcategory_id = int(callback.data.split('_')[1])
+    await callback.message.answer('Выберите товар', reply_markup=await kb.items(podcategory_id))
 
-@router.callback_query(StateFilter(None), F.data.startswith('item_'))
+@router.callback_query(F.data == "to_categories")
+async def back_to_categories(callback: CallbackQuery):
+    """Обрабатывает кнопку 'Назад' и возвращает пользователя к списку категорий."""
+    await callback.message.answer(
+        "Выберите категорию:",
+        reply_markup=await kb.categories()  # Функция, которая возвращает клавиатуру с категориями
+    )
+    await callback.answer()  # Подтверждаем обработку callback-запроса
+
+@router.callback_query(F.data.startswith('item_'))
 async def item(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор товара."""
     item_id = int(callback.data.split('_')[1])
@@ -173,18 +188,23 @@ async def item(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.message.answer(
-        f"Вы выбрали товар: {item_data.name}\nЦена: {item_data.price} рублей.\n\n"
+        f"Вы выбрали товар: {item_data.name}\nОписание: {item_data.description}\nЦена: {item_data.price} рублей.\n"
         "Введите количество товара:",
     )
 
-    # Сохраняем item_id в FSM
     await state.update_data(selected_item_id=item_id)
-
-    # Устанавливаем состояние для ожидания количества
     await state.set_state(Quantity.awaiting_quantity)
 
 
 
+@router.callback_query(F.data == "to_categories")
+async def back_to_categories(callback: CallbackQuery):
+    """Обрабатывает кнопку 'Назад' и возвращает пользователя к списку категорий."""
+    await callback.message.answer(
+        "Выберите категорию:",
+        reply_markup=await kb.categories()  # Функция, которая возвращает клавиатуру с категориями
+    )
+    await callback.answer()  # Подтверждаем обработку callback-запроса
 @router.message(StateFilter(Quantity.awaiting_quantity))
 async def set_quantity(message: Message, state: FSMContext):
     """Обрабатывает ввод количества товара."""
@@ -227,7 +247,7 @@ async def to_main(callback: CallbackQuery):
         f"Текущий бюджет: {business.budget} рублей\n"
         f"Текущие ежемесячные траты: {business.expenses} рублей"
     )
-    await callback.message.answer(response, reply_markup=kb.make_order_button())
+    await callback.message.answer(response, reply_markup=kb.user_command())
 
 
 @router.callback_query(F.data == "show_cart")
@@ -272,7 +292,7 @@ async def confirm_order(callback: CallbackQuery):
 
     # Подсчитываем итоговую стоимость заказа и общий вес
     total_price = 0
-    total_weight = 0
+    total_weight = 0.0  # Теперь total_weight будет float
     cart_details = []  # Список для хранения информации о каждом товаре в корзине
 
     for item, quantity in cart_items:
@@ -328,9 +348,6 @@ async def confirm_order(callback: CallbackQuery):
         bot=callback.bot,
         text=f"Компания {user.business.name} сделала закупку на сумму {total_price} рублей \n#закупки"
     )
-
-
-    
 
 
 @router.callback_query(F.data == "cancel_order")
